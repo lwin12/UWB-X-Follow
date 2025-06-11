@@ -1,0 +1,40 @@
+linear x: Right Joy stick UP   : +1.0 : Robot Moves Forward
+linear x: Right Joy stick DOWN : -0.9 : Robot Moves Backward
+(so x>0 moves forward, x<0 moves backward)
+ 
+linear y: Left Joy stick RIGHT : -0.8 : Robot Strafe Right
+linear y: Left Joy stick LEFT  : +0.8 : Robot Strafe Left
+(so y>0 strafe left, y<0 strafe right)
+ 
+angular z: Right Joy stick RIGHT : -0.9 : Robot keep turning right on the spot.
+angular z: Left Joy stick LEFT   : +0.8 : Robot keep turning left on the spot.
+(so z>0 turn left, y<0 turn right)
+ 
+ros2 topic pub -1 /mcu/command/manual_twist geometry_msgs/msg/Twist "{linear: {x: 0.2, y: 0.0, z: 0.0}, angular: {x: 0.0, y: 0.0, z: 0.0}}"
+ 
+ 
+/////////////
+ 
+# change control mode to 140.
+ros2 topic pub /command/setControlMode std_msgs/msg/UInt32 "{data: 140}"
+(This sets it to api mode, not remote controlled anymore.)
+ 
+# make robot stand
+ros2 service call /ensure_mode ghost_manager_interfaces/EnsureMode "{field: action, valdes: 1}"
+(Have to issue this command if want to move)
+ 
+# set pose rate mode
+ros2 service call /ensure_mode ghost_manager_interfaces/EnsureMode "{field: pose_rate, valdes: 1}"
+ 
+# set 20 degrees pitch position. You could use this an online tool to convert euler to quaternions for this example.
+ros2 topic pub /mcu/command/pose geometry_msgs/msg/Pose "{position: {x: 0.0, y: 0.0, z: 1.0}, orientation: {x: 0.0, y: 0.174, z: 0.0, w: 0.985}}" --rate=100
+ 
+# set walk mode
+ros2 service call /ensure_mode ghost_manager_interfaces/EnsureMode "{field: action, valdes: 2}"
+ 
+# set a forward velocity of 0.6 m/s
+ros2 topic pub --once /mcu/command/manual_twist geometry_msgs/msg/Twist "{linear: {x: 0.6}}" --rate=100
+
+# change control mode to 180.
+ros2 topic pub /command/setControlMode std_msgs/msg/UInt32 "{data: 180}"
+(This sets it back to RC mode)
