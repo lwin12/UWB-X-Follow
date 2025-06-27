@@ -285,5 +285,3 @@ void sendToJetson_Action(float x, float y, float z) {
   Serial.print(", z=");
   Serial.println(z, 2);
 }
-
-
