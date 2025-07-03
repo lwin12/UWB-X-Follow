@@ -352,8 +352,8 @@ void sendToJetson_Action(String action) {
 }
 
 String getActionFromHeadingAndDistance(float heading, float distance) {
-  if (heading > 30 && heading <= 180) return "turn_right";
-  if (heading > 180 && heading < 330) return "turn_left";
+  if (heading > 20 && heading <= 180) return "turn_right";
+  if (heading > 180 && heading < 340) return "turn_left";
   if (distance > 2.5) return "forward";
   //if (distance < 1.0) return "backward";
   return "hold";
