@@ -1,0 +1,2 @@
+Relationship equation: code value =0.462211+1.31774(ln(true value))
+Relationship equation: y =0.462211+1.31774(ln(x))
