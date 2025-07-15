@@ -37,9 +37,30 @@ struct Position {
 AnchorTag COM8, COM9, COM11;
 Position user_position_COM18;
 
+//button and led system
 #define BUTTON_PIN PB13
 bool lastButtonState = HIGH;
+#define LED_PIN PB12
 
+// buzzer system
+#define BUZZER_PIN PA0 
+bool buzzerOverridden = false; 
+
+enum BuzzerTone {
+  NONE,
+  UWB_FAILURE,
+  OUT_OF_RANGE,
+  OBSTACLE,
+  HEARTBEAT
+};
+
+BuzzerTone currentTone = NONE;
+unsigned long buzzerTimer = 0;
+bool buzzerState = false;
+int buzzerStep = 0;
+
+// obstacle detection
+bool isObstacleDetected = false;
 
 
 void setup() {
@@ -73,53 +94,77 @@ void setup() {
 
   // Serial.println("Started continuous distance streaming via 'les'");
 
-  pinMode(BUTTON_PIN, INPUT_PULLUP);
+  pinMode(BUTTON_PIN, INPUT_PULLUP);  // <-- Add this line
+
+  pinMode(LED_PIN, OUTPUT);
+  digitalWrite(LED_PIN, LOW);  // off by default
+
+  pinMode(BUZZER_PIN, OUTPUT);
+  digitalWrite(BUZZER_PIN, LOW);
 }
 
+unsigned long lastHeartbeatTime = 0;
+
 void loop() {
-
-  //isFollowMode = true;  // Always in Follow Mode for now, just for testing
-
-  // Timeout reset: if no update in 2 seconds, reset flags
-  if ((d1_updated || d2_updated || d3_updated) && millis() - lastDataTime > 2000) {
-  Serial.println("[Warning] Timeout: No complete set of distance data received. Resetting flags.");
-  d1_updated = d2_updated = d3_updated = false;
-  }
-
-  processIncomingData(); // function that read and parse data from uwb tags com8 com9
-
-  if (millis() - lastRequestTime > 3000 && (!d1_updated || !d2_updated || !d3_updated)) {
-  Serial.println("[Warning] Still waiting for full UWB update set after 3 seconds.");
-  }
-
-  // Only calculate and display if all distances are updated i.e. all are true
-  if (d1_updated && d2_updated && d3_updated) {
-    calculateXYPosition(); // use 3-point trilateration
-    displayResults();
-    generateFollowCommand();
-    lastRequestTime = millis(); 
-    d1_updated = false;
-    d2_updated = false;
-    d3_updated = false; // reset all boolean values to false
-
-    delay(0);
-  }
-
+  checkForJetsonCommand();  // This may activate tone 4
 
   bool currentButtonState = digitalRead(BUTTON_PIN);
-
-  // Toggle mode when button goes from HIGH -> LOW (pressed)
   if (lastButtonState == HIGH && currentButtonState == LOW) {
     isFollowMode = !isFollowMode;
-
-    if (isFollowMode) Serial.println("UWB Follow-Me Mode Activated");
-    else Serial.println("RC Mode Activated");
-
-    delay(200); // debounce
+    digitalWrite(LED_PIN, isFollowMode ? HIGH : LOW);
+    resetAndInitializeUWB();
+    delay(300);  // debounce
   }
-
   lastButtonState = currentButtonState;
 
+  buzzerOverridden = false;  // Reset tone flag
+
+  if (isFollowMode) {
+    processIncomingData();
+
+    // Highest priority: UWB failure
+    if ((d1_updated || d2_updated || d3_updated) && millis() - lastDataTime > 2000) {
+      currentTone = UWB_FAILURE;
+      buzzerOverridden = true;
+      resetAndInitializeUWB();
+      d1_updated = d2_updated = d3_updated = false;
+      return;
+    }
+
+    // Priority 2: Obstacle
+    if (isObstacleDetected) {
+      currentTone = OBSTACLE;
+      buzzerOverridden = true;
+    }
+
+    // Priority 3: Out-of-range
+    if (!buzzerOverridden && d1_updated && d2_updated && d3_updated) {
+      calculateXYPosition();
+      float dist = sqrt(user_position_COM18.x * user_position_COM18.x + user_position_COM18.y * user_position_COM18.y);
+      if (dist >= 10.0) {
+        currentTone = OUT_OF_RANGE;
+        buzzerOverridden = true;
+      }
+      displayResults();
+      generateFollowCommand();
+      d1_updated = d2_updated = d3_updated = false;
+    }
+
+    if (!buzzerOverridden && currentTone == NONE && millis() - lastHeartbeatTime > 1000) {
+      currentTone = HEARTBEAT;
+      lastHeartbeatTime = millis();
+    }
+  }
+
+  static BuzzerTone lastTone = NONE;
+  if (currentTone != lastTone) {
+    buzzerStep = 0;
+    buzzerState = false;
+    buzzerTimer = millis();
+    lastTone = currentTone;
+  }
+  
+  handleBuzzer();
 }
 
 void processIncomingData() {
@@ -365,4 +410,113 @@ String getActionFromHeadingAndDistance(float heading, float distance) {
   if (distance > 2.5) return "forward";
   //if (distance < 1.0) return "backward";
   return "hold";
+}
+
+void resetAndInitializeUWB() {
+  for (int i = 0; i < 2; i++) {
+    SerialUWB1.write(0x0d); delay(100);
+    SerialUWB2.write(0x0d); delay(100);
+    SerialUWB3.write(0x0d); delay(100);
+  }
+
+  SerialUWB1.write("reset\n"); delay(500);
+  SerialUWB2.write("reset\n"); delay(500);
+  SerialUWB3.write("reset\n"); delay(500);
+
+  for (int i = 0; i < 2; i++) {
+    SerialUWB1.write(0x0d); delay(100);
+    SerialUWB2.write(0x0d); delay(100);
+    SerialUWB3.write(0x0d); delay(100);
+  }
+
+  SerialUWB1.write("les\n"); delay(500);
+  SerialUWB2.write("les\n"); delay(500);
+  SerialUWB3.write("les\n"); delay(500);
+}
+
+void handleBuzzer() {
+  unsigned long now = millis();
+
+  switch (currentTone) {
+
+    case UWB_FAILURE:
+      if (now - buzzerTimer >= (buzzerState ? 100 : 200)) {
+        buzzerState = !buzzerState;
+        digitalWrite(BUZZER_PIN, buzzerState);
+        buzzerTimer = now;
+        if (!buzzerState) {
+          buzzerStep++;
+          if (buzzerStep >= 6) { // 3 beeps (ON/OFF pairs)
+            currentTone = NONE;
+            buzzerStep = 0;
+          }
+        }
+      }
+      break;
+
+    case OUT_OF_RANGE:
+      if (buzzerStep < 3) {
+        if (now - buzzerTimer >= (buzzerState ? 100 : 200)) {
+          buzzerState = !buzzerState;
+          digitalWrite(BUZZER_PIN, buzzerState);
+          buzzerTimer = now;
+          if (!buzzerState) buzzerStep++;
+        }
+      } else if (buzzerStep == 3) {
+        if (now - buzzerTimer >= 600) {
+          digitalWrite(BUZZER_PIN, HIGH);
+          buzzerTimer = now;
+          buzzerStep++;
+        }
+      } else if (buzzerStep == 4) {
+        if (now - buzzerTimer >= 600) {
+          digitalWrite(BUZZER_PIN, LOW);
+          buzzerTimer = now;
+          buzzerStep++;
+        }
+      } else if (buzzerStep < 9) {
+        if (now - buzzerTimer >= (buzzerState ? 100 : 200)) {
+          buzzerState = !buzzerState;
+          digitalWrite(BUZZER_PIN, buzzerState);
+          buzzerTimer = now;
+          if (!buzzerState) buzzerStep++;
+        }
+      } else {
+        currentTone = NONE;
+        buzzerStep = 0;
+      }
+      break;
+
+    case OBSTACLE:
+      digitalWrite(BUZZER_PIN, HIGH); // Constant tone
+      break;
+
+    case HEARTBEAT:
+      if (now - buzzerTimer >= (buzzerState ? 80 : 400)) {
+        buzzerState = !buzzerState;
+        digitalWrite(BUZZER_PIN, buzzerState);
+        buzzerTimer = now;
+      }
+      break;
+
+    case NONE:
+      digitalWrite(BUZZER_PIN, LOW);
+      break;
+  }
+}
+
+void checkForJetsonCommand() {
+  if (Serial.available()) {
+    String cmd = Serial.readStringUntil('\n');
+    cmd.trim();
+    if (cmd == "estop_activated") {
+      isFollowMode = false;
+      digitalWrite(LED_PIN, LOW);
+      resetAndInitializeUWB();
+    } else if (cmd == "obstacle_detected") {
+      isObstacleDetected = true;
+    } else {
+      isObstacleDetected = false;
+    }
+  }
 }
