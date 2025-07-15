@@ -1,0 +1,61 @@
+🔵 START (loop)
+🔹 Check for Jetson Command
+→ Serial.available()?
+  └── Yes →
+    • If "estop_activated" → isFollowMode = false, LED OFF, reset UWB
+    • If "obstacle_detected" → isObstacleDetected = true
+    • Else → isObstacleDetected = false
+
+🔹 Check Button Press
+→ Rising Edge (HIGH → LOW)?
+  └── Yes →
+    • Toggle isFollowMode
+    • Update LED
+    • resetAndInitializeUWB()
+
+🔹 Reset buzzerOverridden = false
+🔵 IF isFollowMode == true
+🔹 Call processIncomingData()
+  → Updates COM8, COM9, COM11 distances
+  → Sets d1_updated, d2_updated, d3_updated
+
+🔹 Priority 1: UWB Failure
+→ (any dX_updated) && millis() - lastDataTime > 2000?
+  └── Yes →
+    • Set currentTone = UWB_FAILURE
+    • buzzerOverridden = true
+    • resetAndInitializeUWB()
+    • Reset dX_updated = false
+    • return (exit early)
+
+🔹 Priority 2: Obstacle Detected
+→ isObstacleDetected == true?
+  └── Yes →
+    • Set currentTone = OBSTACLE
+    • buzzerOverridden = true
+
+🔹 Priority 3: Out-of-Range
+→ !buzzerOverridden && all dX_updated == true?
+  └── Yes →
+    • calculateXYPosition()
+    • Distance >= 10?
+      └── Yes →
+        • currentTone = OUT_OF_RANGE
+        • buzzerOverridden = true
+    • displayResults()
+    • generateFollowCommand()
+    • Reset dX_updated = false
+
+🔹 Priority 4: Heartbeat
+→ !buzzerOverridden && currentTone == NONE && millis() - lastHeartbeatTime > 1000?
+  └── Yes →
+    • currentTone = HEARTBEAT
+    • Update lastHeartbeatTime
+
+🔹 Compare currentTone != lastTone
+→ If changed, reset buzzer parameters
+
+🔹 Call handleBuzzer()
+→ Tone-specific behavior using non-blocking millis()-based timing
+
+🔵 END loop → Repeat
